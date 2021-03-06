@@ -1,13 +1,14 @@
 import { Request, Response } from 'express'
+import { resolve } from "path"
 import { getCustomRepository } from 'typeorm'
+import { AppError } from '../errors/AppError'
 import { SurveysRepository } from '../repositories/SurveysRepository'
 import { SurveysUsersRepository } from '../repositories/SurveysUsersRepository'
 import { UsersRepository } from '../repositories/UsersRepository'
 import SendMailService from '../services/SendMailService'
-import { resolve } from "path";
 
 
-
+// TODO: bug - it sends survey again if user already answered
 class SurveyUserSendMailController {
   async create(request: Request, response: Response) {
     const { email, survey_id } = request.body
@@ -18,12 +19,14 @@ class SurveyUserSendMailController {
 
     const user = await usersRepository.findOne({email})
     if(!user) {
-      return response.status(400).json({error: 'User doesn\'t exist'})
+      throw new AppError('User doesn\'t exist');
+      // return response.status(400).json({error: 'User doesn\'t exist'})
     }
     
     const survey = await surveysRepository.findOne({ id: survey_id })
     if(!survey) {
-      return response.status(400).json({error: 'Survey doesn\'t exist'})
+      throw new AppError('Survey doesn\'t exist');
+      // return response.status(400).json({error: 'Survey doesn\'t exist'})
     }
 
 
@@ -34,28 +37,44 @@ class SurveyUserSendMailController {
       title: survey.title,
       description: survey.description,
       user_id: user.id,
+      surveyUser_id: "",
       link: process.env.URL_MAIL
     }
 
-    const surveyUserAlreadyExists = await surveysUsersRepository.findOne({
-      where: [{user_id: user.id}, {value: null}],
+    const surveyUser = await surveysUsersRepository.findOne({
+      where: {user_id: user.id, value: null},
       relations: ['user', 'survey']
     })
+    // // where user.ir or value null
+    // const surveyUserAlreadyExists = await surveysUsersRepository.findOne({
+    //   where: [{user_id: user.id}, {value: null}],
+    //   relations: ['user', 'survey']
+    // })
     
-    if(surveyUserAlreadyExists) {
+    if(surveyUser) {
+      variables.surveyUser_id = surveyUser.id
+      console.log('====================================');
+      console.log('survey exists and value is null');
+      console.log('====================================');
       await SendMailService.execute(email, survey.title, variables, npsMailPath)
-      return response.json(surveyUserAlreadyExists)
+      return response.json(surveyUser)
     }
     
 
+    console.log('====================================');
+    console.log('survey does not exist');
+    console.log('====================================');
+
     const user_id = user.id
-    const surveyUser = surveysUsersRepository.create({ user_id, survey_id })
+    const newSurveyUser = surveysUsersRepository.create({ user_id, survey_id })
     
-    await surveysUsersRepository.save(surveyUser)
+    await surveysUsersRepository.save(newSurveyUser)
+
+    variables.surveyUser_id = newSurveyUser.id
 
     await SendMailService.execute(email, survey.title, variables, npsMailPath)
     
-    return response.status(201).json(surveyUser)
+    return response.status(201).json(newSurveyUser)
   }
 
   // async show(request: Request, response: Response) {
